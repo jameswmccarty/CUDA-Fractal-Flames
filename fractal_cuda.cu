@@ -5,10 +5,6 @@
 #include <string.h>
 #include <limits.h>
 
-/* GREAT BIG NOTE:
- * the value of CUDA_N must be a multiple
- * of the block dimension, or you will have a 
- * BAD time.                                   */
 //#define CUDA_N 2560
 #define CUDA_N 1024
 #define RANDR(lo,hi) ((lo) + (((hi)-(lo)) * drand48()))
@@ -54,7 +50,7 @@ typedef struct
 
 typedef struct
 {
-  unsigned short int seed;
+  unsigned int seed;
   double total_hits;
   weight color_hstgm[NUMV];
 } d_pixel;
@@ -69,8 +65,8 @@ typedef struct
 {
   int h_xres, h_yres, h_n;
   double h_xmin, h_xmax, h_ymin, h_ymax;
-  unsigned short int *h_chaos;
-  unsigned short int *d_chaos;
+  unsigned int *h_chaos;
+  unsigned int *d_chaos;
   params *d_params;
   params *h_params;
   affine *d_coeff;
@@ -268,20 +264,18 @@ modulus (double a, double b)
 }				/* end of modulus */
 
 __device__ void
-cuda_rnd (unsigned short int *seed)
+cuda_rnd (unsigned int *seed)
 {
-  /* Thank you, StackOverflow...a 16 bit linear shift register RNG */
-  unsigned short lfsr;
-  unsigned short bit;
-
-  lfsr = *seed;
-  bit = ((lfsr >> 0) ^ (lfsr >> 2) ^ (lfsr >> 3) ^ (lfsr >> 5)) & 1;
-  lfsr = (lfsr >> 1) | (bit << 15);
-  *seed = lfsr;
-}				/* end of cuda-rnd */
+	const unsigned int m = 2147483648;
+	const unsigned int a = 161664525;
+	const unsigned int c = 12345;
+	unsigned int s = *seed;
+	s = (a*s+c)%m;
+	*seed = s;
+}
 
 __global__ void
-pre_process (d_pixel * pxls, unsigned short int *rnds, int d_n)
+pre_process (d_pixel * pxls, unsigned int *rnds, int d_n)
 {
   int i, j, buf_idx, co_idx;
 
@@ -303,7 +297,7 @@ pre_process (d_pixel * pxls, unsigned short int *rnds, int d_n)
 }				/* end of pre-process */
 
 __global__ void
-resow (d_pixel * pxls, unsigned short int *rnds)
+resow (d_pixel * pxls, unsigned int *rnds)
 {
   int i, j, buf_idx;
 
@@ -374,14 +368,13 @@ render (d_pixel * pxls, affine * coarray, params * prms, int d_n,
   double newx, newy, x, y, theta, P0, P1;
   double theta2, r, xtmp, ytmp, prefix;
 
-  //unsigned short int seed;
+
   /* compute x (i) and y (j) index from Block and Thread */
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   if (!(i < CUDA_N && j < CUDA_N))
     return;			/* verify inbounds of image */
 
-  //seed = (short) (i + j*CUDA_N + salt);
   xtmp = xmax - (((double) i / (double) CUDA_N) * (xmax - xmin));
   ytmp = ymax - (((double) j / (double) CUDA_N) * (ymax - ymin));
 
@@ -795,7 +788,7 @@ setup_fractal (fractal * flame)
   //ssize_t h_size = CUDA_N*CUDA_N*(sizeof(h_pixel) + sizeof(double)*flame->h_n);
   ssize_t d_size = CUDA_N * CUDA_N * (sizeof (d_pixel));
   ssize_t h_size = CUDA_N * CUDA_N * (sizeof (h_pixel));
-  ssize_t r_size = CUDA_N * CUDA_N * (sizeof (unsigned short int));
+  ssize_t r_size = CUDA_N * CUDA_N * (sizeof (unsigned int));
 
   /* assign a CUDA memory buffer for the fractal, and ZERO */
   ERR_CUDA (cudaMalloc (&flame->d_pixels, d_size))
@@ -829,7 +822,7 @@ setup_fractal (fractal * flame)
   ERR_CUDA (cudaMalloc (&flame->d_chaos, r_size));
   ERR_CUDA (cudaMemset (flame->d_chaos, '\0', r_size));
   /* get HOST memory for random vars */
-  flame->h_chaos = (unsigned short int *) malloc (r_size);
+  flame->h_chaos = (unsigned int *) malloc (r_size);
   if (flame->h_chaos == NULL)
     {
       printf ("malloc() failed in setup_fractal.\n");
@@ -864,7 +857,7 @@ setup_fractal (fractal * flame)
 void
 reseed (fractal * flame)
 {
-  ssize_t r_size = CUDA_N * CUDA_N * (sizeof (unsigned short int));
+  ssize_t r_size = CUDA_N * CUDA_N * (sizeof (unsigned int));
   int idx;
 
   memset (flame->h_chaos, '\0', r_size);
@@ -872,7 +865,7 @@ reseed (fractal * flame)
   /* sow the seeds of chaos */
   for (idx = 0; idx < CUDA_N * CUDA_N; idx++)
     {
-      flame->h_chaos[idx] = (unsigned short int) rand ();
+      flame->h_chaos[idx] = (unsigned int) rand ();
     }
   /* place in buffer for later access during resow */
 ERR_CUDA (cudaMemcpy (flame->d_chaos, flame->h_chaos, r_size, cudaMemcpyHostToDevice))}	/* end of reseed */
@@ -1050,7 +1043,8 @@ main (int argc, char **argv)
   flame.h_n = NUMV;
 
   /* setup block sizes to allow for rendering in min number of blocks */
-  ERR_CUDA (cudaDeviceReset ())dim3 threadsPerBlock (16, 16);
+  ERR_CUDA (cudaDeviceReset ())
+  dim3 threadsPerBlock (1, 1);
   dim3 numBlocks (CUDA_N / threadsPerBlock.x, CUDA_N / threadsPerBlock.y);
 
   /* memory setup and initial setup */
@@ -1066,7 +1060,7 @@ main (int argc, char **argv)
   pre_process <<< numBlocks, threadsPerBlock >>> (flame.d_pixels,
 						  flame.d_chaos, flame.h_n);
   cudaDeviceSynchronize ();
-  for (int salt = 0; salt < 100; salt++)
+  for (int salt = 0; salt < 10; salt++)
     {
       reseed (&flame);
       resow <<< numBlocks, threadsPerBlock >>> (flame.d_pixels,
@@ -1074,7 +1068,7 @@ main (int argc, char **argv)
       render <<< numBlocks, threadsPerBlock >>> (flame.d_pixels,
 						 flame.d_coeff,
 						 flame.d_params, flame.h_n,
-						 10, flame.h_params->xmin,
+						 20, flame.h_params->xmin,
 						 flame.h_params->xmax,
 						 flame.h_params->ymin,
 						 flame.h_params->ymax);
@@ -1086,7 +1080,7 @@ main (int argc, char **argv)
   data_transfer (&flame);
 
   /* perform CPU post-processing */
-  color_process (&flame, 2.2);
+  color_process (&flame, 1.0);
 
   /* write the image to file */
   write_to_tiff (&flame);

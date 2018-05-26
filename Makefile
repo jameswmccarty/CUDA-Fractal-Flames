@@ -1,7 +1,7 @@
 #Makefile for CUDA based fractal generator
 
 CC = nvcc
-NVCCFLAGS += -D_FORCE_INLINES -ccbin=$(CXX) -Xcompiler -fPIC $(COMMON_FLAGS) -arch sm_21 -D CUDA
+NVCCFLAGS += -D_FORCE_INLINES -ccbin=$(CXX) -Xcompiler -fPIC $(COMMON_FLAGS) -arch sm_50 -D CUDA
 CFLAGS = -ansi -O2
 DFLAGS = -ansi -O0 -g 
 LFLAGS = -lm -ltiff
