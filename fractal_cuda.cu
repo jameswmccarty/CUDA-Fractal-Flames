@@ -5,8 +5,8 @@
 #include <string.h>
 #include <limits.h>
 
-//#define CUDA_N 2560
-#define CUDA_N 1024
+#define CUDA_N 4736
+//#define CUDA_N 1024
 #define RANDR(lo,hi) ((lo) + (((hi)-(lo)) * drand48()))
 #define MAX(X, Y) (((X) > (Y)) ? (X) : (Y))
 #define ERR_CUDA(x)  err = ((x)); if(err != cudaSuccess) { printf("%s\n", cudaGetErrorString(err)); exit(EXIT_FAILURE); }
@@ -323,6 +323,8 @@ post_process (d_pixel * pxls, int d_n)
   /* compute x (i) and y (j) index from Block and Thread */
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
+  i %= CUDA_N;
+  j %= CUDA_N;
   if (!(i < CUDA_N && j < CUDA_N))
     return;			/* verify inbounds of image */
   buf_idx = i + j * CUDA_N;
@@ -372,6 +374,8 @@ render (d_pixel * pxls, affine * coarray, params * prms, int d_n,
   /* compute x (i) and y (j) index from Block and Thread */
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
+  i %= CUDA_N;
+  j %= CUDA_N;
   if (!(i < CUDA_N && j < CUDA_N))
     return;			/* verify inbounds of image */
 
@@ -458,8 +462,8 @@ render (d_pixel * pxls, affine * coarray, params * prms, int d_n,
 	  P0 = P0 * P0 * P0;
 	  P1 = cos (theta - r);
 	  P1 = P1 * P1 * P1;
-	  newx = r * (P0 + P1);
-	  newy = r * (P0 - P1);
+	  xtmp = r * (P0 + P1);
+	  ytmp = r * (P0 - P1);
 	  break;
 	case 13:		/* Julia */
 	  r = sqrt (sqrt (x * x + y * y));
@@ -1060,7 +1064,7 @@ main (int argc, char **argv)
   pre_process <<< numBlocks, threadsPerBlock >>> (flame.d_pixels,
 						  flame.d_chaos, flame.h_n);
   cudaDeviceSynchronize ();
-  for (int salt = 0; salt < 10; salt++)
+  for (int salt = 0; salt < 3; salt++)
     {
       reseed (&flame);
       resow <<< numBlocks, threadsPerBlock >>> (flame.d_pixels,
